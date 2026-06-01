@@ -84,11 +84,11 @@ async function fetchSpotifyChart() {
   const token = await getSpotifyToken();
   if (!token) { console.log('  ✗ Spotify: no token'); return null; }
 
-  const searchTerms = ['Top Hits 2026', 'Global Hits', 'Viral Hits 2026', 'Pop Hits 2026', 'Rap Hits 2026', 'Indie Hits 2026'];
+  const searchTerms = ['Top Hits 2026', 'Global Hits', 'Viral Hits 2026', 'Pop Hits 2026', 'Rap Hits 2026', 'Indie Hits 2026', 'Hot Hits 2026', 'Summer Hits 2026'];
   const allItems = [];
   const seenIds = new Set();
   for (const q of searchTerms) {
-    const data = await fetchJson(`https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=track&limit=20&market=US`, {
+    const data = await fetchJson(`https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=track&limit=10&market=US`, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
     if (data?.tracks?.items) {
@@ -378,11 +378,11 @@ async function fetchTikTokChart() {
   const token = await getSpotifyToken();
   if (!token) { console.log('  ✗ TikTok: no Spotify token'); return null; }
 
-  const searchTerms = ['TikTok Viral 2026', 'TikTok Hits', 'TikTok Trending'];
+  const searchTerms = ['TikTok Trending', 'TikTok Viral', 'TikTok Songs 2026', 'Viral Songs 2026', 'Social Media Hits'];
   const allItems = [];
   const seenIds = new Set();
   for (const q of searchTerms) {
-    const data = await fetchJson(`https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=track&limit=30&market=US`, {
+    const data = await fetchJson(`https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=track&limit=10&market=US`, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
     if (data?.tracks?.items) {
@@ -432,6 +432,17 @@ async function main() {
   console.log('🎵 MusicPulse 数据获取开始...\n');
   const startTime = Date.now();
 
+  // 读取上次数据，用于失败时保留旧数据
+  let previousData = null;
+  const outPath = process.argv[2] || 'data.json';
+  try {
+    const prev = readFileSync(outPath, 'utf8');
+    previousData = JSON.parse(prev);
+    console.log(`📂 读取上次数据: ${Object.keys(previousData.platforms || {}).filter(k => previousData.platforms[k].isLive).length} 个平台有数据\n`);
+  } catch {
+    console.log('📂 无上次数据，从头开始\n');
+  }
+
   const results = await Promise.allSettled([
     fetchDeezerChart(),
     fetchAppleChart(),
@@ -460,21 +471,28 @@ async function main() {
   };
 
   let successCount = 0;
+  let preservedCount = 0;
   results.forEach((result, i) => {
     const platform = platformNames[i];
     if (result.status === 'fulfilled' && result.value) {
       output.platforms[platform] = { ...result.value, isLive: true };
       successCount++;
     } else {
-      output.platforms[platform] = { isLive: false, error: result.status === 'rejected' ? String(result.reason?.message || result.reason) : 'no data returned' };
+      // 失败时保留上次的数据
+      const prev = previousData?.platforms?.[platform];
+      if (prev && prev.isLive && (prev.tracks?.length || prev.artists?.length || prev.playlists?.length)) {
+        output.platforms[platform] = prev;
+        preservedCount++;
+        console.log(`  ↻ ${platform}: 保留上次数据`);
+      } else {
+        output.platforms[platform] = { isLive: false, error: result.status === 'rejected' ? String(result.reason?.message || result.reason) : 'no data returned' };
+      }
     }
   });
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`\n✅ 完成! ${successCount}/${platformNames.length} 平台成功 (${elapsed}s)`);
+  console.log(`\n✅ 完成! ${successCount}/${platformNames.length} 平台成功, ${preservedCount} 个保留上次数据 (${elapsed}s)`);
 
-  // 输出到指定路径
-  const outPath = process.argv[2] || 'data.json';
   writeFileSync(outPath, JSON.stringify(output));
   console.log(`📄 ${outPath} 已保存 (${(JSON.stringify(output).length / 1024).toFixed(1)} KB)`);
 }
